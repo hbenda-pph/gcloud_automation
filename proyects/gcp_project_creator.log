@@ -1,0 +1,12 @@
+2025-07-04 05:35:21,831 - INFO - Obteniendo datos de compañías desde platform-partners-des.settings.companies
+2025-07-04 05:35:48,782 - ERROR - Error al obtener datos de BigQuery: string indices must be integers, not 'str'
+2025-07-04 05:35:48,782 - ERROR - Error en el proceso principal: string indices must be integers, not 'str'
+2025-07-04 05:35:48,782 - INFO - Proceso de creación de proyectos completado
+2025-07-04 05:39:29,350 - INFO - Obteniendo datos de compañías desde platform-partners-des.settings.companies
+2025-07-04 05:39:29,355 - ERROR - Error al obtener datos de BigQuery: string indices must be integers, not 'str'
+2025-07-04 05:39:29,355 - ERROR - Error en el proceso principal: string indices must be integers, not 'str'
+2025-07-04 05:39:29,355 - INFO - Proceso de creación de proyectos completado
+2025-07-04 05:40:44,024 - INFO - Obteniendo datos de compañías desde platform-partners-des.settings.companies
+2025-07-04 05:40:44,030 - ERROR - Error al obtener datos de BigQuery: string indices must be integers, not 'str'
+2025-07-04 05:40:44,030 - ERROR - Error en el proceso principal: string indices must be integers, not 'str'
+2025-07-04 05:40:44,030 - INFO - Proceso de creación de proyectos completado
