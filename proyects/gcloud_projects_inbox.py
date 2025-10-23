@@ -192,7 +192,6 @@ def dry_run_mode():
                  , company_new_name
                  , company_project_id
             FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
-           WHERE company_project_id IS NULL
            ORDER BY company_id
         """
 
