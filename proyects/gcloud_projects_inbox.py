@@ -22,6 +22,7 @@ def generate_gcp_commands(row):
     """
     company_id = row.company_id
     company_name = row.company_name
+    company_new_name = row.company_new_name
     project_id = "pph-inbox"
     
     # Comando para crear el proyecto (sin --set-as-default)
@@ -192,10 +193,13 @@ def dry_run_mode():
                  , company_new_name
                  , company_project_id
             FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
+           WHERE company_project_id IS NULL
            ORDER BY company_id
         """
 
-        print(f"Ejecutando consulta...")
+        print(f"Ejecutando consulta:")
+        print(query)
+        print()
         
         # Ejecutar consulta
         query_job = client.query(query)
@@ -305,7 +309,9 @@ def real_execution_mode():
            ORDER BY company_id
         """
 
-        print(f"Ejecutando consulta...")
+        print(f"Ejecutando consulta:")
+        print(query)
+        print()
         
         # Ejecutar consulta
         query_job = client.query(query)
