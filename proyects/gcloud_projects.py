@@ -336,7 +336,7 @@ def dry_run_mode():
                  , company_new_name
                  , company_project_id
             FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
-           WHERE company_project_id IS NULL                        
+           WHERE company_project_id IS NULL
            ORDER BY company_id
         """
 
@@ -447,7 +447,7 @@ def real_execution_mode():
                  , company_new_name
                  , company_project_id
             FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
-           WHERE company_project_id IS NULL                        
+           WHERE company_project_id IS NULL
            ORDER BY company_id
         """
 
@@ -542,7 +542,7 @@ def prepare_cloud_run():
                  , company_new_name
                  , company_project_id
             FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
-           WHERE company_project_id IS NULL                        
+           WHERE company_bigquery_status = TRUE
            ORDER BY company_id
         """
 
@@ -781,6 +781,7 @@ def delete_projects_real():
         execute_command('gcloud config set project platform-partners-des', dry_run=False)
 
 
+
 def main():
     """
     Función principal que permite elegir entre dry-run y ejecución real
@@ -794,7 +795,7 @@ def main():
     print("5. Preparación de proyectos para Cloud Run y Logs")
     print("=" * 60)
     
-    choice = input("Selecciona el modo (1, 2, 3 o 4): ").strip()
+    choice = input("Selecciona el modo (1-5): ").strip()
     
     if choice == "1":
         dry_run_mode()
