@@ -501,6 +501,10 @@ includedPermissions:
 
 
 def main():
+    # Guardar el valor inicial de PROJECT_SOURCE en una variable local
+    # para usarlo en parser.add_argument sin problemas de scope
+    default_source_project = PROJECT_SOURCE
+    
     parser = argparse.ArgumentParser(
         description='Gestiona Custom Roles para usuarios de Google Sheets',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -540,21 +544,19 @@ Ejemplos de uso:
     parser.add_argument('--users', help='Lista de usuarios separados por coma (requerido si action=assign, opcional para create-all)')
     parser.add_argument('--dry-run', action='store_true',
                        help='Modo de prueba - muestra qué haría sin ejecutar cambios')
-    parser.add_argument('--source-project', default=PROJECT_SOURCE,
-                       help=f'Proyecto donde está la tabla companies (default: {PROJECT_SOURCE})')
+    parser.add_argument('--source-project', default=default_source_project,
+                       help=f'Proyecto donde está la tabla companies (default: {default_source_project})')
     
     args = parser.parse_args()
     
-    # Declarar global al inicio de la función
+    # Declarar global y actualizar PROJECT_SOURCE si se proporciona un valor diferente
     global PROJECT_SOURCE
-    
-    # Actualizar PROJECT_SOURCE si se proporciona un valor diferente
     if args.source_project and args.source_project != PROJECT_SOURCE:
         PROJECT_SOURCE = args.source_project
     
     # Validar argumentos
     if args.action == 'create-all':
-        # Para create-all, no se requiere --project
+        # Para create-all, no se requiere --project|
         pass
     elif not args.project:
         parser.error("--project es requerido para esta acción")
