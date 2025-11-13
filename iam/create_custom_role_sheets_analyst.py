@@ -545,6 +545,13 @@ Ejemplos de uso:
     
     args = parser.parse_args()
     
+    # Declarar global al inicio de la función
+    global PROJECT_SOURCE
+    
+    # Actualizar PROJECT_SOURCE si se proporciona un valor diferente
+    if args.source_project and args.source_project != PROJECT_SOURCE:
+        PROJECT_SOURCE = args.source_project
+    
     # Validar argumentos
     if args.action == 'create-all':
         # Para create-all, no se requiere --project
@@ -554,11 +561,6 @@ Ejemplos de uso:
     
     if args.action == 'assign' and not args.users:
         parser.error("--users es requerido cuando action=assign")
-    
-    # Actualizar PROJECT_SOURCE si se proporciona
-    if args.source_project:
-        global PROJECT_SOURCE
-        PROJECT_SOURCE = args.source_project
     
     # Crear gestor base (solo se usa para create-all)
     if args.action == 'create-all':
