@@ -378,10 +378,11 @@ includedPermissions:
             logger.error(f"❌ Error: {str(e)}")
             return []
     
-    def get_companies_with_projects(self) -> List[Dict]:
+    def get_companies_with_projects(self, source_project: str = None) -> List[Dict]:
         """Obtiene todas las compañías con proyectos desde BigQuery"""
         try:
-            client = bigquery.Client(project=PROJECT_SOURCE)
+            source_project = source_project or PROJECT_SOURCE
+            client = bigquery.Client(project=source_project)
             
             query = f"""
                 SELECT 
@@ -389,7 +390,7 @@ includedPermissions:
                     company_name, 
                     company_new_name,
                     company_project_id
-                FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
+                FROM `{source_project}.{DATASET_NAME}.{TABLE_NAME}`
                 WHERE company_project_id IS NOT NULL
                   AND company_project_id != ''
                 ORDER BY company_id
@@ -413,10 +414,10 @@ includedPermissions:
             logger.error(f"❌ Error obteniendo compañías desde BigQuery: {str(e)}")
             return []
     
-    def create_role_in_all_companies(self, users: Optional[List[str]] = None) -> Dict:
+    def create_role_in_all_companies(self, users: Optional[List[str]] = None, source_project: str = None) -> Dict:
         """Crea el custom role en todos los proyectos de compañías"""
         
-        companies = self.get_companies_with_projects()
+        companies = self.get_companies_with_projects(source_project=source_project)
         
         if not companies:
             logger.error("❌ No se encontraron compañías con proyectos asignados")
@@ -549,14 +550,9 @@ Ejemplos de uso:
     
     args = parser.parse_args()
     
-    # Declarar global y actualizar PROJECT_SOURCE si se proporciona un valor diferente
-    global PROJECT_SOURCE
-    if args.source_project and args.source_project != PROJECT_SOURCE:
-        PROJECT_SOURCE = args.source_project
-    
     # Validar argumentos
     if args.action == 'create-all':
-        # Para create-all, no se requiere --project|
+        # Para create-all, no se requiere --project
         pass
     elif not args.project:
         parser.error("--project es requerido para esta acción")
@@ -566,9 +562,10 @@ Ejemplos de uso:
     
     # Crear gestor base (solo se usa para create-all)
     if args.action == 'create-all':
-        # Usar un proyecto dummy para el gestor base
+        # Usar el source_project o el default
+        source_project = args.source_project or default_source_project
         manager = CustomRoleManager(
-            project_id=args.source_project or PROJECT_SOURCE,
+            project_id=source_project,
             dry_run=args.dry_run
         )
     else:
@@ -608,7 +605,8 @@ Ejemplos de uso:
             users = None
             if args.users:
                 users = [u.strip() for u in args.users.split(',') if u.strip()]
-            results = manager.create_role_in_all_companies(users=users)
+            source_project = args.source_project or default_source_project
+            results = manager.create_role_in_all_companies(users=users, source_project=source_project)
             # Exit code 0 si no hay fallos, 1 si hay fallos
             sys.exit(0 if len(results['failed']) == 0 else 1)
     
