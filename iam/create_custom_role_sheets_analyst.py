@@ -289,20 +289,25 @@ includedPermissions:
         
         try:
             member = f"user:{email}"
-            cmd = f"gcloud projects add-iam-policy-binding {self.project_id} --member='{member}' --role='{self.role_name}' --condition=None"
+            # Quitar --condition=None ya que no es válido, solo se usa si hay una condición real
+            cmd = f"gcloud projects add-iam-policy-binding {self.project_id} --member='{member}' --role='{self.role_name}'"
             
             if self.dry_run:
                 logger.info(f"🔍 DRY-RUN: {cmd}")
                 return True
             else:
                 logger.info(f"🚀 Asignando rol '{CUSTOM_ROLE_ID}' a {email}...")
+                logger.debug(f"Comando: {cmd}")
                 result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
                 
                 if result.returncode == 0:
                     logger.info(f"✅ Rol asignado exitosamente a {email}")
+                    logger.debug(f"Output: {result.stdout}")
                     return True
                 else:
-                    logger.error(f"❌ Error asignando rol a {email}: {result.stderr}")
+                    logger.error(f"❌ Error asignando rol a {email}")
+                    logger.error(f"Stderr: {result.stderr}")
+                    logger.error(f"Stdout: {result.stdout}")
                     return False
                     
         except Exception as e:
@@ -353,29 +358,51 @@ includedPermissions:
             return []
         
         try:
-            cmd = f"gcloud projects get-iam-policy {self.project_id} --flatten='bindings[].members' --filter='bindings.role:{self.role_name}' --format='value(bindings.members)'"
+            # Usar un enfoque más robusto: obtener toda la política y filtrar en Python
+            cmd = f"gcloud projects get-iam-policy {self.project_id} --format=json"
+            logger.debug(f"Comando: {cmd}")
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             
             if result.returncode == 0:
-                users = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+                import json
+                policy = json.loads(result.stdout)
+                
+                users = []
+                # Buscar en todos los bindings
+                for binding in policy.get('bindings', []):
+                    if binding.get('role') == self.role_name:
+                        for member in binding.get('members', []):
+                            users.append(member)
+                
+                # Eliminar duplicados y ordenar
+                users = sorted(list(set(users)))
                 
                 print(f"\n{'='*80}")
                 print(f"👥 USUARIOS CON EL ROL '{CUSTOM_ROLE_ID}'")
                 print(f"{'='*80}")
+                print(f"Role completo: {self.role_name}")
                 if users:
                     for idx, user in enumerate(users, 1):
                         print(f"{idx}. {user}")
                 else:
                     print("No hay usuarios con este rol asignado")
+                    print(f"\n💡 Verificando política IAM completa...")
+                    # Mostrar todos los roles para debug
+                    logger.debug("Todos los roles en el proyecto:")
+                    for binding in policy.get('bindings', []):
+                        logger.debug(f"  - {binding.get('role')}: {len(binding.get('members', []))} miembros")
                 print(f"{'='*80}\n")
                 
                 return users
             else:
-                logger.error(f"❌ Error: {result.stderr}")
+                logger.error(f"❌ Error obteniendo política IAM: {result.stderr}")
+                logger.error(f"Stdout: {result.stdout}")
                 return []
                 
         except Exception as e:
             logger.error(f"❌ Error: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
     
     def get_companies_with_projects(self, source_project: str = None) -> List[Dict]:
