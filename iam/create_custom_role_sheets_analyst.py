@@ -6,6 +6,21 @@ Este script crea un rol personalizado que agrupa los permisos necesarios
 para trabajar con Google Sheets conectadas a BigQuery, y opcionalmente
 puede asignar ese rol a usuarios.
 
+IMPORTANTE - DÓNDE EJECUTAR EL SCRIPT:
+=====================================
+Las Google Sheets están en el proyecto central "pph-central", pero se conectan
+a vistas de BigQuery que están en cada proyecto de compañía (31 proyectos).
+
+Para que los usuarios puedan acceder a las Sheets conectadas a BigQuery,
+necesitan permisos en los PROYECTOS DE COMPAÑÍA (donde están las vistas y datasets).
+
+Por lo tanto:
+- ✅ CREAR el custom role en CADA PROYECTO DE COMPAÑÍA (31 proyectos)
+- ❌ NO es necesario crearlo en el proyecto central "pph-central"
+
+El script puede crear el rol en todos los proyectos automáticamente usando
+la acción 'create-all' que lee la tabla companies.
+
 Ventajas de Custom Roles:
 - Un solo rol agrupa todos los permisos necesarios
 - Fácil de mantener: modificas el rol una vez, aplica a todos
@@ -13,19 +28,25 @@ Ventajas de Custom Roles:
 - Escalable: agregar permisos sin tocar cada usuario
 
 Uso:
-    # 1. Crear el custom role
+    # OPCIÓN 1: Crear en un proyecto específico
     python create_custom_role_sheets_analyst.py --project PROJECT_ID --action create
     
-    # 2. Ver el custom role
+    # OPCIÓN 2: Crear en TODOS los proyectos de compañías automáticamente (RECOMENDADO)
+    python create_custom_role_sheets_analyst.py --action create-all
+    
+    # Crear en todos los proyectos Y asignar a usuarios
+    python create_custom_role_sheets_analyst.py --action create-all --users "user1@domain.com,user2@domain.com"
+    
+    # Ver el custom role en un proyecto
     python create_custom_role_sheets_analyst.py --project PROJECT_ID --action describe
     
-    # 3. Actualizar el custom role (agregar más permisos)
+    # Actualizar el custom role (agregar más permisos)
     python create_custom_role_sheets_analyst.py --project PROJECT_ID --action update
     
-    # 4. Asignar el role a usuarios
+    # Asignar el role a usuarios en un proyecto específico
     python create_custom_role_sheets_analyst.py --project PROJECT_ID --action assign --users "user1@domain.com,user2@domain.com"
     
-    # 5. Listar usuarios con el role
+    # Listar usuarios con el role en un proyecto
     python create_custom_role_sheets_analyst.py --project PROJECT_ID --action list-users
 """
 
@@ -36,6 +57,7 @@ import json
 from typing import List, Dict, Optional
 import logging
 from datetime import datetime
+from google.cloud import bigquery
 
 # Configuración de logging
 logging.basicConfig(
@@ -52,6 +74,11 @@ logger = logging.getLogger(__name__)
 CUSTOM_ROLE_ID = "pphSheetsAnalyst"
 CUSTOM_ROLE_TITLE = "PPH Sheets Analyst"
 CUSTOM_ROLE_DESCRIPTION = "Rol personalizado para analistas que trabajan con Google Sheets conectadas a BigQuery"
+
+# Configuración para obtener proyectos desde BigQuery (opcional)
+PROJECT_SOURCE = "pph-central"  # Proyecto donde está la tabla companies
+DATASET_NAME = "settings"
+TABLE_NAME = "companies"
 
 # Permisos incluidos en el rol (puedes expandir esto fácilmente)
 CUSTOM_ROLE_PERMISSIONS = [
@@ -350,6 +377,127 @@ includedPermissions:
         except Exception as e:
             logger.error(f"❌ Error: {str(e)}")
             return []
+    
+    def get_companies_with_projects(self) -> List[Dict]:
+        """Obtiene todas las compañías con proyectos desde BigQuery"""
+        try:
+            client = bigquery.Client(project=PROJECT_SOURCE)
+            
+            query = f"""
+                SELECT 
+                    company_id, 
+                    company_name, 
+                    company_new_name,
+                    company_project_id
+                FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
+                WHERE company_project_id IS NOT NULL
+                  AND company_project_id != ''
+                ORDER BY company_id
+            """
+            
+            query_job = client.query(query)
+            results = query_job.result()
+            
+            companies = []
+            for row in results:
+                companies.append({
+                    'company_id': row.company_id,
+                    'company_name': row.company_name,
+                    'company_new_name': row.company_new_name,
+                    'project_id': row.company_project_id
+                })
+            
+            return companies
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo compañías desde BigQuery: {str(e)}")
+            return []
+    
+    def create_role_in_all_companies(self, users: Optional[List[str]] = None) -> Dict:
+        """Crea el custom role en todos los proyectos de compañías"""
+        
+        companies = self.get_companies_with_projects()
+        
+        if not companies:
+            logger.error("❌ No se encontraron compañías con proyectos asignados")
+            return {'success': [], 'failed': [], 'skipped': []}
+        
+        print(f"\n{'='*80}")
+        print(f"🏢 CREAR CUSTOM ROLE EN TODOS LOS PROYECTOS DE COMPAÑÍAS")
+        print(f"{'='*80}")
+        print(f"Total de compañías: {len(companies)}")
+        if users:
+            print(f"Usuarios a asignar: {', '.join(users)}")
+        print(f"{'='*80}\n")
+        
+        results = {'success': [], 'failed': [], 'skipped': []}
+        
+        for idx, company in enumerate(companies, 1):
+            company_name = company.get('company_new_name') or company.get('company_name')
+            project_id = company['project_id']
+            
+            print(f"\n[{idx}/{len(companies)}] Procesando: {company_name}")
+            print(f"   Project ID: {project_id}")
+            
+            # Crear manager para este proyecto
+            company_manager = CustomRoleManager(
+                project_id=project_id,
+                dry_run=self.dry_run
+            )
+            
+            # Crear el rol
+            if company_manager.create_role():
+                results['success'].append({
+                    'company': company_name,
+                    'project_id': project_id
+                })
+                
+                # Si se proporcionaron usuarios, asignar el rol
+                if users:
+                    logger.info(f"   Asignando rol a usuarios en {project_id}...")
+                    assign_results = company_manager.assign_role_to_users(users)
+                    if len(assign_results['failed']) > 0:
+                        logger.warning(f"   ⚠️  Algunos usuarios fallaron en {project_id}")
+            else:
+                # Verificar si el rol ya existe
+                if company_manager.role_exists():
+                    results['skipped'].append({
+                        'company': company_name,
+                        'project_id': project_id,
+                        'reason': 'Rol ya existe'
+                    })
+                    logger.info(f"   ⏭️  Rol ya existe, saltando...")
+                    
+                    # Si se proporcionaron usuarios, intentar asignar de todas formas
+                    if users:
+                        logger.info(f"   Asignando rol a usuarios en {project_id}...")
+                        assign_results = company_manager.assign_role_to_users(users)
+                else:
+                    results['failed'].append({
+                        'company': company_name,
+                        'project_id': project_id
+                    })
+        
+        # Resumen final
+        print(f"\n{'='*80}")
+        print(f"📊 RESUMEN FINAL")
+        print(f"{'='*80}")
+        print(f"✅ Exitosos: {len(results['success'])}/{len(companies)}")
+        for item in results['success']:
+            print(f"   - {item['company']} ({item['project_id']})")
+        
+        if results['skipped']:
+            print(f"\n⏭️  Omitidos (ya existían): {len(results['skipped'])}/{len(companies)}")
+            for item in results['skipped']:
+                print(f"   - {item['company']} ({item['project_id']})")
+        
+        if results['failed']:
+            print(f"\n❌ Fallidos: {len(results['failed'])}/{len(companies)}")
+            for item in results['failed']:
+                print(f"   - {item['company']} ({item['project_id']})")
+        print(f"{'='*80}\n")
+        
+        return results
 
 
 def main():
@@ -374,30 +522,57 @@ Ejemplos de uso:
   # Listar usuarios con el role
   python create_custom_role_sheets_analyst.py --project platform-partners-des --action list-users
 
+  # Crear el role en TODOS los proyectos de compañías (desde tabla companies)
+  python create_custom_role_sheets_analyst.py --action create-all
+
+  # Crear el role en todos los proyectos Y asignar a usuarios
+  python create_custom_role_sheets_analyst.py --action create-all --users "user1@domain.com,user2@domain.com"
+
   # Dry-run
   python create_custom_role_sheets_analyst.py --project platform-partners-des --action create --dry-run
         """
     )
     
-    parser.add_argument('--project', required=True, help='ID del proyecto GCP')
+    parser.add_argument('--project', help='ID del proyecto GCP (requerido para acciones específicas)')
     parser.add_argument('--action', required=True,
-                       choices=['create', 'describe', 'update', 'assign', 'list-users'],
+                       choices=['create', 'describe', 'update', 'assign', 'list-users', 'create-all'],
                        help='Acción a realizar')
-    parser.add_argument('--users', help='Lista de usuarios separados por coma (requerido si action=assign)')
+    parser.add_argument('--users', help='Lista de usuarios separados por coma (requerido si action=assign, opcional para create-all)')
     parser.add_argument('--dry-run', action='store_true',
                        help='Modo de prueba - muestra qué haría sin ejecutar cambios')
+    parser.add_argument('--source-project', default=PROJECT_SOURCE,
+                       help=f'Proyecto donde está la tabla companies (default: {PROJECT_SOURCE})')
     
     args = parser.parse_args()
     
     # Validar argumentos
+    if args.action == 'create-all':
+        # Para create-all, no se requiere --project
+        pass
+    elif not args.project:
+        parser.error("--project es requerido para esta acción")
+    
     if args.action == 'assign' and not args.users:
         parser.error("--users es requerido cuando action=assign")
     
-    # Crear gestor
-    manager = CustomRoleManager(
-        project_id=args.project,
-        dry_run=args.dry_run
-    )
+    # Actualizar PROJECT_SOURCE si se proporciona
+    if args.source_project:
+        global PROJECT_SOURCE
+        PROJECT_SOURCE = args.source_project
+    
+    # Crear gestor base (solo se usa para create-all)
+    if args.action == 'create-all':
+        # Usar un proyecto dummy para el gestor base
+        manager = CustomRoleManager(
+            project_id=args.source_project or PROJECT_SOURCE,
+            dry_run=args.dry_run
+        )
+    else:
+        # Crear gestor para proyecto específico
+        manager = CustomRoleManager(
+            project_id=args.project,
+            dry_run=args.dry_run
+        )
     
     # Ejecutar acción
     try:
@@ -424,6 +599,14 @@ Ejemplos de uso:
         elif args.action == 'list-users':
             manager.list_users_with_role()
             sys.exit(0)
+        
+        elif args.action == 'create-all':
+            users = None
+            if args.users:
+                users = [u.strip() for u in args.users.split(',') if u.strip()]
+            results = manager.create_role_in_all_companies(users=users)
+            # Exit code 0 si no hay fallos, 1 si hay fallos
+            sys.exit(0 if len(results['failed']) == 0 else 1)
     
     except KeyboardInterrupt:
         print("\n\n❌ Operación interrumpida por el usuario")
