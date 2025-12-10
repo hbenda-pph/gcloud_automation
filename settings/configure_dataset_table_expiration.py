@@ -30,10 +30,13 @@ PROJECT_SOURCE = "platform-partners-des"
 DATASET_NAME = "settings"
 TABLE_NAME = "companies"
 
-# Valor por defecto para la expiración de tablas (en milisegundos)
-# Por defecto: 90 días = 90 * 24 * 60 * 60 * 1000 = 7,776,000,000 ms
-# Puede ser modificado según necesidades
-DEFAULT_TABLE_EXPIRATION_MS = 90 * 24 * 60 * 60 * 1000  # 90 días en milisegundos
+# Valor por defecto para la expiración de tablas
+# Por defecto: None (No configurado - sin expiración automática)
+# El usuario puede ingresar un número de días para configurar una expiración personalizada
+DEFAULT_TABLE_EXPIRATION_MS = None  # None = No configurado
+
+# Datasets a excluir (que empiecen con estos prefijos)
+EXCLUDED_DATASET_PREFIXES = ["fivetran", "servicetitan_"]
 
 
 def get_companies_with_projects() -> List[Dict]:
@@ -115,11 +118,12 @@ def get_dataset_expiration(project_id: str, dataset_id: str) -> Optional[int]:
 def configure_dataset_expiration(
     project_id: str, 
     dataset_id: str, 
-    expiration_ms: int, 
+    expiration_ms: Optional[int], 
     dry_run: bool = True
 ) -> Dict:
     """
     Configura el default_table_expiration_ms para un dataset
+    Si expiration_ms es None, deshabilita la expiración (deja como "No configurado")
     
     Returns:
         Dict con 'success', 'skipped', 'current_value', 'new_value'
@@ -142,8 +146,12 @@ def configure_dataset_expiration(
         current_expiration = dataset.default_table_expiration_ms
         
         # Verificar si ya tiene el valor configurado
+        # Comparar considerando None
         if current_expiration == expiration_ms:
-            logger.info(f"Dataset {dataset_ref} ya tiene el valor configurado: {expiration_ms} ms")
+            if expiration_ms is None:
+                logger.info(f"Dataset {dataset_ref} ya tiene la expiración deshabilitada (None)")
+            else:
+                logger.info(f"Dataset {dataset_ref} ya tiene el valor configurado: {expiration_ms} ms")
             return {
                 'success': True,
                 'skipped': True,
@@ -152,10 +160,16 @@ def configure_dataset_expiration(
             }
         
         if dry_run:
-            logger.info(f"DRY-RUN: Configuraría {dataset_ref} con expiration_ms={expiration_ms}")
-            print(f"🔍 DRY-RUN: Configuraría {dataset_ref}")
-            print(f"   Valor actual: {current_expiration} ms" if current_expiration else "   Valor actual: None")
-            print(f"   Nuevo valor: {expiration_ms} ms ({expiration_ms / (24*60*60*1000):.0f} días)")
+            if expiration_ms is None:
+                logger.info(f"DRY-RUN: Deshabilitaría expiración en {dataset_ref}")
+                print(f"🔍 DRY-RUN: Deshabilitaría expiración en {dataset_ref}")
+                print(f"   Valor actual: {current_expiration} ms" if current_expiration else "   Valor actual: None (No configurado)")
+                print(f"   Nuevo valor: None (No configurado)")
+            else:
+                logger.info(f"DRY-RUN: Configuraría {dataset_ref} con expiration_ms={expiration_ms}")
+                print(f"🔍 DRY-RUN: Configuraría {dataset_ref}")
+                print(f"   Valor actual: {current_expiration} ms" if current_expiration else "   Valor actual: None (No configurado)")
+                print(f"   Nuevo valor: {expiration_ms} ms ({expiration_ms / (24*60*60*1000):.0f} días)")
             return {
                 'success': True,
                 'skipped': False,
@@ -163,14 +177,20 @@ def configure_dataset_expiration(
                 'new_value': expiration_ms
             }
         
-        # Configurar el nuevo valor
+        # Configurar el nuevo valor (None para deshabilitar)
         dataset.default_table_expiration_ms = expiration_ms
         client.update_dataset(dataset, ['default_table_expiration_ms'])
         
-        logger.info(f"✅ Configurado {dataset_ref} con expiration_ms={expiration_ms}")
-        print(f"✅ Configurado {dataset_ref}")
-        print(f"   Valor anterior: {current_expiration} ms" if current_expiration else "   Valor anterior: None")
-        print(f"   Nuevo valor: {expiration_ms} ms ({expiration_ms / (24*60*60*1000):.0f} días)")
+        if expiration_ms is None:
+            logger.info(f"✅ Expiración deshabilitada en {dataset_ref}")
+            print(f"✅ Expiración deshabilitada en {dataset_ref}")
+            print(f"   Valor anterior: {current_expiration} ms" if current_expiration else "   Valor anterior: None (No configurado)")
+            print(f"   Nuevo valor: None (No configurado)")
+        else:
+            logger.info(f"✅ Configurado {dataset_ref} con expiration_ms={expiration_ms}")
+            print(f"✅ Configurado {dataset_ref}")
+            print(f"   Valor anterior: {current_expiration} ms" if current_expiration else "   Valor anterior: None (No configurado)")
+            print(f"   Nuevo valor: {expiration_ms} ms ({expiration_ms / (24*60*60*1000):.0f} días)")
         
         return {
             'success': True,
@@ -197,13 +217,25 @@ def configure_dataset_expiration(
         }
 
 
+def should_exclude_dataset(dataset_id: str) -> bool:
+    """
+    Verifica si un dataset debe ser excluido según los prefijos configurados
+    """
+    dataset_lower = dataset_id.lower()
+    for prefix in EXCLUDED_DATASET_PREFIXES:
+        if dataset_lower.startswith(prefix.lower()):
+            return True
+    return False
+
+
 def process_company_datasets(
     company: Dict, 
-    expiration_ms: int, 
+    expiration_ms: Optional[int], 
     dry_run: bool = True
 ) -> Dict:
     """
     Procesa todos los datasets de una compañía
+    Excluye datasets que empiecen con los prefijos configurados en EXCLUDED_DATASET_PREFIXES
     """
     company_id = company['company_id']
     company_name = company['company_name']
@@ -220,6 +252,7 @@ def process_company_datasets(
         'company_name': company_name,
         'project_id': project_id,
         'datasets_found': 0,
+        'datasets_excluded': 0,
         'datasets_configured': 0,
         'datasets_skipped': 0,
         'datasets_failed': 0,
@@ -227,15 +260,28 @@ def process_company_datasets(
     }
     
     # Listar todos los datasets del proyecto
-    datasets = list_datasets_in_project(project_id)
+    all_datasets = list_datasets_in_project(project_id)
     
-    if not datasets:
+    if not all_datasets:
         print(f"⚠️  No se encontraron datasets en el proyecto {project_id}")
         results['errors'].append('No se encontraron datasets')
         return results
     
-    results['datasets_found'] = len(datasets)
-    print(f"📊 Se encontraron {len(datasets)} datasets en el proyecto")
+    # Filtrar datasets excluidos
+    datasets = [ds for ds in all_datasets if not should_exclude_dataset(ds)]
+    excluded_datasets = [ds for ds in all_datasets if should_exclude_dataset(ds)]
+    
+    results['datasets_found'] = len(all_datasets)
+    results['datasets_excluded'] = len(excluded_datasets)
+    
+    print(f"📊 Se encontraron {len(all_datasets)} datasets en el proyecto")
+    if excluded_datasets:
+        print(f"🚫 Datasets excluidos ({len(excluded_datasets)}): {', '.join(excluded_datasets)}")
+    print(f"📋 Datasets a procesar: {len(datasets)}")
+    
+    if not datasets:
+        print(f"⚠️  No hay datasets para procesar (todos fueron excluidos)")
+        return results
     
     # Procesar cada dataset
     for dataset_id in datasets:
@@ -244,8 +290,10 @@ def process_company_datasets(
         # Obtener valor actual
         current_expiration = get_dataset_expiration(project_id, dataset_id)
         if current_expiration is not None:
-            days = current_expiration / (24*60*60*1000) if current_expiration else None
-            print(f"   Expiración actual: {current_expiration} ms ({days:.0f} días)" if days else f"   Expiración actual: None")
+            days = current_expiration / (24*60*60*1000)
+            print(f"   Expiración actual: {current_expiration} ms ({days:.0f} días)")
+        else:
+            print(f"   Expiración actual: None (No configurado)")
         
         # Configurar expiración
         result = configure_dataset_expiration(
@@ -268,6 +316,7 @@ def process_company_datasets(
     # Resumen de la empresa
     print(f"\n📋 RESUMEN PARA {company_name}:")
     print(f"   Datasets encontrados: {results['datasets_found']}")
+    print(f"   Datasets excluidos: {results['datasets_excluded']}")
     print(f"   Datasets configurados: {results['datasets_configured']}")
     print(f"   Datasets ya configurados (saltados): {results['datasets_skipped']}")
     print(f"   Datasets con errores: {results['datasets_failed']}")
@@ -275,13 +324,16 @@ def process_company_datasets(
     return results
 
 
-def dry_run_mode(expiration_ms: int):
+def dry_run_mode(expiration_ms: Optional[int]):
     """
     Modo de ejecución en seco - solo muestra los cambios que se harían
     """
     print("🔍 MODO DRY-RUN - Solo mostrando cambios (no se ejecutarán)")
     print("=" * 80)
-    print(f"⏰ Valor de expiración a configurar: {expiration_ms} ms ({expiration_ms / (24*60*60*1000):.0f} días)")
+    if expiration_ms is None:
+        print(f"⏰ Valor de expiración a configurar: None (No configurado - deshabilitar expiración)")
+    else:
+        print(f"⏰ Valor de expiración a configurar: {expiration_ms} ms ({expiration_ms / (24*60*60*1000):.0f} días)")
     print("=" * 80)
     
     companies = get_companies_with_projects()
@@ -293,6 +345,7 @@ def dry_run_mode(expiration_ms: int):
     print(f"📋 Se encontraron {len(companies)} empresas con proyectos asignados\n")
     
     total_datasets = 0
+    total_excluded = 0
     total_to_configure = 0
     total_skipped = 0
     total_failed = 0
@@ -300,6 +353,7 @@ def dry_run_mode(expiration_ms: int):
     for company in companies:
         result = process_company_datasets(company, expiration_ms, dry_run=True)
         total_datasets += result['datasets_found']
+        total_excluded += result['datasets_excluded']
         total_to_configure += result['datasets_configured']
         total_skipped += result['datasets_skipped']
         total_failed += result['datasets_failed']
@@ -308,20 +362,24 @@ def dry_run_mode(expiration_ms: int):
     print(f"📊 RESUMEN GENERAL:")
     print(f"   Empresas procesadas: {len(companies)}")
     print(f"   Total de datasets encontrados: {total_datasets}")
+    print(f"   Total de datasets excluidos: {total_excluded}")
     print(f"   Total de datasets a configurar: {total_to_configure}")
     print(f"   Total de datasets ya configurados: {total_skipped}")
     print(f"   Total de datasets con errores: {total_failed}")
     print(f"{'='*80}")
 
 
-def real_execution_mode(expiration_ms: int):
+def real_execution_mode(expiration_ms: Optional[int]):
     """
     Modo de ejecución real - configura la expiración de tablas
     """
     print("🚀 MODO EJECUCIÓN REAL - Configurando expiración de tablas")
     print("⚠️  ADVERTENCIA: Esto modificará la configuración de datasets en BigQuery")
     print("=" * 80)
-    print(f"⏰ Valor de expiración a configurar: {expiration_ms} ms ({expiration_ms / (24*60*60*1000):.0f} días)")
+    if expiration_ms is None:
+        print(f"⏰ Valor de expiración a configurar: None (No configurado - deshabilitar expiración)")
+    else:
+        print(f"⏰ Valor de expiración a configurar: {expiration_ms} ms ({expiration_ms / (24*60*60*1000):.0f} días)")
     print("=" * 80)
     
     # Confirmación del usuario
@@ -339,6 +397,7 @@ def real_execution_mode(expiration_ms: int):
     print(f"📋 Se encontraron {len(companies)} empresas con proyectos asignados\n")
     
     total_datasets = 0
+    total_excluded = 0
     total_configured = 0
     total_skipped = 0
     total_failed = 0
@@ -349,6 +408,7 @@ def real_execution_mode(expiration_ms: int):
         try:
             result = process_company_datasets(company, expiration_ms, dry_run=False)
             total_datasets += result['datasets_found']
+            total_excluded += result['datasets_excluded']
             total_configured += result['datasets_configured']
             total_skipped += result['datasets_skipped']
             total_failed += result['datasets_failed']
@@ -370,6 +430,7 @@ def real_execution_mode(expiration_ms: int):
     print(f"   Empresas exitosas: {successful_companies}")
     print(f"   Empresas con errores: {failed_companies}")
     print(f"   Total de datasets encontrados: {total_datasets}")
+    print(f"   Total de datasets excluidos: {total_excluded}")
     print(f"   Total de datasets configurados: {total_configured}")
     print(f"   Total de datasets ya configurados: {total_skipped}")
     print(f"   Total de datasets con errores: {total_failed}")
@@ -379,8 +440,11 @@ def real_execution_mode(expiration_ms: int):
 def list_datasets_only():
     """
     Solo lista los datasets de cada proyecto sin configurar nada
+    Excluye datasets que empiecen con los prefijos configurados
     """
     print("📋 MODO LISTADO - Solo mostrando datasets encontrados")
+    print("=" * 80)
+    print(f"🚫 Datasets excluidos: {', '.join(EXCLUDED_DATASET_PREFIXES)}")
     print("=" * 80)
     
     companies = get_companies_with_projects()
@@ -392,6 +456,7 @@ def list_datasets_only():
     print(f"📋 Se encontraron {len(companies)} empresas con proyectos asignados\n")
     
     total_datasets = 0
+    total_excluded = 0
     
     for company in companies:
         company_name = company['company_name']
@@ -400,12 +465,22 @@ def list_datasets_only():
         print(f"\n🏢 EMPRESA: {company_name}")
         print(f"   Project ID: {project_id}")
         
-        datasets = list_datasets_in_project(project_id)
+        all_datasets = list_datasets_in_project(project_id)
         
-        if not datasets:
+        if not all_datasets:
             print(f"   ⚠️  No se encontraron datasets")
         else:
-            print(f"   📊 Datasets encontrados ({len(datasets)}):")
+            # Filtrar datasets excluidos
+            datasets = [ds for ds in all_datasets if not should_exclude_dataset(ds)]
+            excluded_datasets = [ds for ds in all_datasets if should_exclude_dataset(ds)]
+            
+            total_datasets += len(datasets)
+            total_excluded += len(excluded_datasets)
+            
+            print(f"   📊 Datasets encontrados ({len(all_datasets)}):")
+            if excluded_datasets:
+                print(f"   🚫 Datasets excluidos ({len(excluded_datasets)}): {', '.join(excluded_datasets)}")
+            print(f"   📋 Datasets a procesar ({len(datasets)}):")
             for dataset_id in datasets:
                 expiration = get_dataset_expiration(project_id, dataset_id)
                 if expiration:
@@ -413,34 +488,43 @@ def list_datasets_only():
                     print(f"      - {dataset_id} (expiración: {expiration} ms = {days:.0f} días)")
                 else:
                     print(f"      - {dataset_id} (expiración: No configurada)")
-            total_datasets += len(datasets)
     
     print(f"\n{'='*80}")
     print(f"📊 RESUMEN:")
     print(f"   Empresas procesadas: {len(companies)}")
-    print(f"   Total de datasets encontrados: {total_datasets}")
+    print(f"   Total de datasets encontrados: {total_datasets + total_excluded}")
+    print(f"   Total de datasets excluidos: {total_excluded}")
+    print(f"   Total de datasets a procesar: {total_datasets}")
     print(f"{'='*80}")
 
 
-def get_expiration_value() -> int:
+def get_expiration_value() -> Optional[int]:
     """
     Solicita al usuario el valor de expiración en días y lo convierte a milisegundos
+    Valor por defecto: None (No configurado)
+    El usuario puede ingresar un número de días para configurar una expiración personalizada
     """
     print("\n⏰ CONFIGURACIÓN DE EXPIRACIÓN DE TABLAS")
     print("=" * 60)
-    print(f"Valor por defecto: {DEFAULT_TABLE_EXPIRATION_MS / (24*60*60*1000):.0f} días")
+    print("Valor por defecto: None (No configurado - sin expiración automática)")
+    print("Ingresa un número de días para configurar una expiración personalizada")
     print("=" * 60)
     
     while True:
         try:
-            days_input = input(f"Ingresa el número de días para la expiración (Enter para usar {DEFAULT_TABLE_EXPIRATION_MS / (24*60*60*1000):.0f} días): ").strip()
+            days_input = input("Ingresa el número de días para la expiración (Enter para usar 'No configurado'): ").strip().lower()
             
             if not days_input:
-                return DEFAULT_TABLE_EXPIRATION_MS
+                return None  # Valor por defecto: None (No configurado)
+            
+            # Verificar si el usuario quiere explícitamente deshabilitar la expiración
+            if days_input in ['none', '0', 'deshabilitar', 'no configurado', 'n']:
+                return None
             
             days = int(days_input)
             if days <= 0:
                 print("❌ El número de días debe ser mayor a 0")
+                print("   (Si quieres deshabilitar la expiración, ingresa 'none', '0', o 'deshabilitar')")
                 continue
             
             expiration_ms = days * 24 * 60 * 60 * 1000
@@ -448,6 +532,7 @@ def get_expiration_value() -> int:
             
         except ValueError:
             print("❌ Por favor ingresa un número válido")
+            print("   (O ingresa 'none', '0', o 'deshabilitar' para deshabilitar la expiración)")
         except KeyboardInterrupt:
             print("\n❌ Operación cancelada")
             sys.exit(1)
