@@ -39,7 +39,9 @@ def generate_gcp_commands(row):
     company_id = row.company_id
     company_name = row.company_name
     company_new_name = row.company_new_name
-    project_id = generate_project_id(company_new_name, company_id)
+
+    # Tomar el project_id desde la tabla (si existe). Si no existe, generarlo.
+    project_id = getattr(row, "company_project_id", None) or generate_project_id(company_new_name, company_id)
     
     # Comando para crear el proyecto (sin --set-as-default)
     create_project_cmd = f"gcloud projects create {project_id} --name=\"{company_new_name}\""
@@ -137,10 +139,21 @@ def execute_project_creation(commands, dry_run=True):
     success_count = 0
     total_commands = 0
     
-    # 1. Crear proyecto
+    # 1. Crear proyecto (si ya existe, no fallar: continuar con el resto)
     total_commands += 1
-    if execute_command(commands['create_project_cmd'], dry_run):
-        success_count += 1
+    if dry_run:
+        if execute_command(commands['create_project_cmd'], dry_run):
+            success_count += 1
+    else:
+        # Verificar si el proyecto ya existe antes de intentar crearlo
+        describe_cmd = f"gcloud projects describe {commands['project_id']} --format=\"value(projectId)\""
+        result = subprocess.run(describe_cmd, shell=True, capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            print(f"ℹ️  Proyecto ya existe: {commands['project_id']} (se omite creación)")
+            success_count += 1
+        else:
+            if execute_command(commands['create_project_cmd'], dry_run):
+                success_count += 1
     
     # 2. Habilitar APIs
     total_commands += 1
@@ -180,8 +193,8 @@ def execute_project_creation(commands, dry_run=True):
     all_success = (success_count == total_commands)
     print(f"\n📊 RESUMEN: {success_count}/{total_commands} comandos {'simulados' if dry_run else 'ejecutados'} exitosamente")
     
-    # Si todo fue exitoso y no es dry_run, actualizar en BigQuery
-    if all_success and not dry_run:
+    # Si todo fue exitoso y no es dry_run, asegurar company_project_id en la tabla (solo si venía vacío)
+    if all_success and not dry_run and not commands.get("row_company_project_id"):
         update_company_project_in_bq(commands['company_id'], commands['project_id'])
     
     return all_success
@@ -204,13 +217,13 @@ def dry_run_mode():
         print("Cliente BigQuery creado exitosamente")
         
         # Consulta SQL
+        # Seleccionar todas las compañías INBOX; el project_id se toma desde la tabla.
         query = f"""
             SELECT company_id
                  , company_name
                  , company_new_name
                  , company_project_id
             FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
-           WHERE company_project_id IS NULL
            ORDER BY company_id
         """
 
@@ -239,13 +252,10 @@ def dry_run_mode():
                 print(f"  company_new_name: {row.company_new_name}")
                 print(f"  company_project_id: {row.company_project_id}")
                 
-                if row.company_project_id is not None:
-                    print(f"  ⚠️  Ya existe un project_id registrado ({row.company_project_id}), se omite la creación.")
-                    print("-" * 80)
-                    continue
-                
                 # Generar comandos
                 commands = generate_gcp_commands(row)
+                # Recordar si el row traía project_id para decidir si actualizamos el campo al final
+                commands["row_company_project_id"] = row.company_project_id
                 
                 if commands:
                     successful_commands += 1
@@ -316,13 +326,13 @@ def real_execution_mode():
         print("Cliente BigQuery creado exitosamente")
         
         # Consulta SQL
+        # Seleccionar todas las compañías INBOX; el project_id se toma desde la tabla.
         query = f"""
             SELECT company_id
                  , company_name
                  , company_new_name
                  , company_project_id
             FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
-           WHERE company_project_id IS NULL
            ORDER BY company_id
         """
 
@@ -350,13 +360,9 @@ def real_execution_mode():
                 print(f"  company_new_name: {row.company_new_name}")
                 print(f"  company_project_id: {row.company_project_id}")
                 
-                if row.company_project_id is not None:
-                    print(f"  ⚠️  Ya existe un project_id registrado ({row.company_project_id}), se omite la creación.")
-                    print("-" * 80)
-                    continue
-                
                 # Generar comandos
                 commands = generate_gcp_commands(row)
+                commands["row_company_project_id"] = row.company_project_id
                 
                 if commands:
                     # Ejecutar secuencia de creación
