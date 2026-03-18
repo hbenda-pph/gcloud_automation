@@ -6,15 +6,31 @@ from google.cloud import bigquery
 import subprocess
 import sys
 
-PROJECT_SOURCE = "platform-partners-des"
+# Fuente de configuración INBOX (según tu tabla actualizada)
+# Nota: esta tabla vive en el proyecto pph-inbox.
+PROJECT_SOURCE = "pph-inbox"
 DATASET_NAME = "settings"
-TABLE_NAME = "companies_inbox"
+TABLE_NAME = "companies"
 
 def generate_project_id(company_new_name, company_id):
     """
-    Retorna el project_id fijo para el proyecto inbox
+    Genera el project_id para el proyecto INBOX por compañía.
+
+    Nomenclatura propuesta:
+      - company_id = 0   -> pph-inbox         (legado)
+      - company_id >= 101 -> pph-inbox-<n>    donde n = company_id - 100
     """
-    return "pph-inbox"
+    if company_id == 0:
+        # Proyecto legado creado originalmente como 'pph-inbox'
+        return "pph-inbox"
+
+    # Nuevo esquema: company_id = 101, 102, 103... => inbox_n = 1, 2, 3...
+    if company_id >= 101:
+        inbox_n = int(company_id) - 100
+        return f"pph-inbox-{inbox_n}"
+
+    # Fallback defensivo (por si aparece algún ID inesperado < 101)
+    return f"pph-inbox-{company_id}"
 
 def generate_gcp_commands(row):
     """
@@ -23,7 +39,7 @@ def generate_gcp_commands(row):
     company_id = row.company_id
     company_name = row.company_name
     company_new_name = row.company_new_name
-    project_id = "pph-inbox"
+    project_id = generate_project_id(company_new_name, company_id)
     
     # Comando para crear el proyecto (sin --set-as-default)
     create_project_cmd = f"gcloud projects create {project_id} --name=\"{company_new_name}\""
@@ -38,7 +54,8 @@ def generate_gcp_commands(row):
         create_datasets_cmds.append(f"bq mk --project_id={project_id} --dataset --location=US {dataset}")
     
     # Comandos para crear buckets de Cloud Storage
-    buckets = ["pph-inbox_servicetitan", "pph-inbox_fivetran"]
+    # Nota: el nombre del bucket debe ser globalmente único; usar el project_id ayuda a evitar colisiones.
+    buckets = [f"{project_id}_servicetitan", f"{project_id}_fivetran"]
     create_buckets_cmds = []
     for bucket in buckets:
         create_buckets_cmds.append(f"gsutil mb -p {project_id} -l US gs://{bucket}")
@@ -89,7 +106,7 @@ def execute_command(command, dry_run=True):
 
 def update_company_project_in_bq(company_id, project_id):
     """
-    Actualiza el campo company_project en la tabla companies_inbox para el company_id dado
+    Actualiza el campo company_project_id en la tabla de configuración INBOX para el company_id dado
     """
     from google.cloud import bigquery
     client = bigquery.Client(project=PROJECT_SOURCE)
