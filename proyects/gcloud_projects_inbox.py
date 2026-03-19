@@ -12,6 +12,8 @@ PROJECT_SOURCE = "pph-inbox"
 DATASET_NAME = "settings"
 TABLE_NAME = "companies"
 
+RUNNER_SERVICE_ACCOUNT = "etl-servicetitan@pph-inbox.iam.gserviceaccount.com"
+
 def generate_project_id(company_new_name, company_id):
     """
     Genera el project_id para el proyecto INBOX por compañía.
@@ -67,6 +69,11 @@ def generate_gcp_commands(row):
     add_bigquery_admin_role_cmd = f"gcloud projects add-iam-policy-binding {project_id} --member=serviceAccount:fivetran-account-service@{project_id}.iam.gserviceaccount.com --role=roles/bigquery.admin"
     add_storage_admin_role_cmd = f"gcloud projects add-iam-policy-binding {project_id} --member=serviceAccount:fivetran-account-service@{project_id}.iam.gserviceaccount.com --role=roles/storage.admin"
     add_storage_object_admin_role_cmd = f"gcloud projects add-iam-policy-binding {project_id} --member=serviceAccount:fivetran-account-service@{project_id}.iam.gserviceaccount.com --role=roles/storage.objectAdmin"
+
+    # Permisos para el Cloud Run Job runner (Cross-project) para que pueda escribir en el proyecto INBOX temporal
+    add_runner_bigquery_admin_role_cmd = f"gcloud projects add-iam-policy-binding {project_id} --member=serviceAccount:{RUNNER_SERVICE_ACCOUNT} --role=roles/bigquery.admin"
+    add_runner_storage_admin_role_cmd = f"gcloud projects add-iam-policy-binding {project_id} --member=serviceAccount:{RUNNER_SERVICE_ACCOUNT} --role=roles/storage.admin"
+    add_runner_storage_object_admin_role_cmd = f"gcloud projects add-iam-policy-binding {project_id} --member=serviceAccount:{RUNNER_SERVICE_ACCOUNT} --role=roles/storage.objectAdmin"
     
     return {
         'company_id': company_id,
@@ -80,7 +87,10 @@ def generate_gcp_commands(row):
         'create_service_account_cmd': create_service_account_cmd,
         'add_bigquery_admin_role_cmd': add_bigquery_admin_role_cmd,
         'add_storage_admin_role_cmd': add_storage_admin_role_cmd,
-        'add_storage_object_admin_role_cmd': add_storage_object_admin_role_cmd
+        'add_storage_object_admin_role_cmd': add_storage_object_admin_role_cmd,
+        'add_runner_bigquery_admin_role_cmd': add_runner_bigquery_admin_role_cmd,
+        'add_runner_storage_admin_role_cmd': add_runner_storage_admin_role_cmd,
+        'add_runner_storage_object_admin_role_cmd': add_runner_storage_object_admin_role_cmd
     }
 
 def execute_command(command, dry_run=True):
@@ -189,6 +199,22 @@ def execute_project_creation(commands, dry_run=True):
     total_commands += 1
     if execute_command(commands['add_storage_object_admin_role_cmd'], dry_run):
         success_count += 1
+
+    # Roles runner (Cloud Run job runner)
+    total_commands += 1
+    if execute_command(commands.get('add_runner_bigquery_admin_role_cmd', ''), dry_run):
+        if commands.get('add_runner_bigquery_admin_role_cmd'):
+            success_count += 1
+
+    total_commands += 1
+    if execute_command(commands.get('add_runner_storage_admin_role_cmd', ''), dry_run):
+        if commands.get('add_runner_storage_admin_role_cmd'):
+            success_count += 1
+
+    total_commands += 1
+    if execute_command(commands.get('add_runner_storage_object_admin_role_cmd', ''), dry_run):
+        if commands.get('add_runner_storage_object_admin_role_cmd'):
+            success_count += 1
     
     all_success = (success_count == total_commands)
     print(f"\n📊 RESUMEN: {success_count}/{total_commands} comandos {'simulados' if dry_run else 'ejecutados'} exitosamente")
