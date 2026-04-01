@@ -14,6 +14,9 @@ TABLE_NAME = "companies"
 
 RUNNER_SERVICE_ACCOUNT = "etl-servicetitan@pph-inbox.iam.gserviceaccount.com"
 
+# Reemplaza esto con el ID real de tu cuenta de facturación de GCP (ej: "01ABCD-12ABCD-34ABCD")
+BILLING_ACCOUNT_ID = "01A94E-AFAEB6-396A55"
+
 def generate_project_id(company_new_name, company_id):
     """
     Genera el project_id para el proyecto INBOX por compañía.
@@ -41,6 +44,9 @@ def generate_gcp_commands(row):
     
     # Comando para crear el proyecto (sin --set-as-default)
     create_project_cmd = f"gcloud projects create {project_id} --name=\"{company_new_name}\""
+    
+    # Comando para vincular la cuenta de facturación (necesario antes de crear buckets y habilitar APIs)
+    link_billing_cmd = f"gcloud billing projects link {project_id} --billing-account={BILLING_ACCOUNT_ID}"
     
     # Comando para habilitar APIs necesarias
     enable_apis_cmd = f"gcloud services enable bigquery.googleapis.com --project={project_id}"
@@ -75,6 +81,7 @@ def generate_gcp_commands(row):
         'company_new_name': company_new_name,
         'project_id': project_id,
         'create_project_cmd': create_project_cmd,
+        'link_billing_cmd': link_billing_cmd,
         'enable_apis_cmd': enable_apis_cmd,
         'create_datasets_cmds': create_datasets_cmds,
         'create_buckets_cmds': create_buckets_cmds,
@@ -145,9 +152,12 @@ def execute_project_creation(commands, dry_run=True):
     
     # 1. Crear proyecto (si ya existe, no fallar: continuar con el resto)
     total_commands += 1
+    project_ready = False
+    
     if dry_run:
         if execute_command(commands['create_project_cmd'], dry_run):
             success_count += 1
+            project_ready = True
     else:
         # Verificar si el proyecto ya existe antes de intentar crearlo
         describe_cmd = f"gcloud projects describe {commands['project_id']} --format=\"value(projectId)\""
@@ -155,9 +165,19 @@ def execute_project_creation(commands, dry_run=True):
         if result.returncode == 0 and result.stdout.strip():
             print(f"ℹ️  Proyecto ya existe: {commands['project_id']} (se omite creación)")
             success_count += 1
+            project_ready = True
         else:
             if execute_command(commands['create_project_cmd'], dry_run):
                 success_count += 1
+                project_ready = True
+    
+    # 1.5 Vincular cuenta de facturación
+    if BILLING_ACCOUNT_ID and BILLING_ACCOUNT_ID != "POR_DEFINIR":
+        total_commands += 1
+        if execute_command(commands['link_billing_cmd'], dry_run):
+            success_count += 1
+    else:
+        print(f"⚠️  Omitiendo vinculación de facturación (BILLING_ACCOUNT_ID no configurado)")
     
     # 2. Habilitar APIs
     total_commands += 1
@@ -213,8 +233,9 @@ def execute_project_creation(commands, dry_run=True):
     all_success = (success_count == total_commands)
     print(f"\n📊 RESUMEN: {success_count}/{total_commands} comandos {'simulados' if dry_run else 'ejecutados'} exitosamente")
     
-    # Si todo fue exitoso y no es dry_run, asegurar company_project_id en la tabla (solo si venía vacío)
-    if all_success and not dry_run and not commands.get("row_company_project_id"):
+    # Si el proyecto existe o se pudo crear, actualizar company_project_id en la BD (solo si venía vacío)
+    # Esto asegura que el BQ se actualiza aunque un Bucket o IAM role haya fallado
+    if project_ready and not dry_run and not commands.get("row_company_project_id"):
         update_company_project_in_bq(commands['company_id'], commands['project_id'])
     
     return all_success
@@ -286,6 +307,10 @@ def dry_run_mode():
                     print(f"    # Crear proyecto")
                     print(f"    {commands['create_project_cmd']}")
                     print()
+                    if BILLING_ACCOUNT_ID and BILLING_ACCOUNT_ID != "POR_DEFINIR":
+                        print(f"    # Vincular cuenta de facturación")
+                        print(f"    {commands['link_billing_cmd']}")
+                        print()
                     print(f"    # Habilitar APIs")
                     print(f"    {commands['enable_apis_cmd']}")
                     print()
