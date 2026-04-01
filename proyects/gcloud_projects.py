@@ -75,7 +75,7 @@ def generate_gcp_commands(row):
     enable_apis_cmd = f"gcloud services enable bigquery.googleapis.com --project={project_id}"
     
     # Comandos para crear datasets de BigQuery
-    datasets = ["settings", "fivetran", "bronze", "silver", "gold", "management"]
+    datasets = ["settings", "fivetran", "bronze", "silver", "gold", "management", "dashboards", "exports", "reports"]
     create_datasets_cmds = []
     for dataset in datasets:
         create_datasets_cmds.append(f"bq mk --project_id={project_id} --dataset --location=US {dataset}")

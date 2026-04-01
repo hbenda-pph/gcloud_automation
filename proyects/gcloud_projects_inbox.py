@@ -17,21 +17,15 @@ RUNNER_SERVICE_ACCOUNT = "etl-servicetitan@pph-inbox.iam.gserviceaccount.com"
 def generate_project_id(company_new_name, company_id):
     """
     Genera el project_id para el proyecto INBOX por compañía.
-
-    Nomenclatura propuesta:
-      - company_id = 0   -> pph-inbox         (legado)
-      - company_id >= 101 -> pph-inbox-<n>    donde n = company_id - 100
     """
     if company_id == 0:
         # Proyecto legado creado originalmente como 'pph-inbox'
         return "pph-inbox"
 
-    # Nuevo esquema: company_id = 101, 102, 103... => inbox_n = 1, 2, 3...
-    if company_id >= 101:
+    if company_id >= 100:
         inbox_n = int(company_id) - 100
         return f"pph-inbox-{inbox_n}"
 
-    # Fallback defensivo (por si aparece algún ID inesperado < 101)
     return f"pph-inbox-{company_id}"
 
 def generate_gcp_commands(row):
@@ -52,7 +46,7 @@ def generate_gcp_commands(row):
     enable_apis_cmd = f"gcloud services enable bigquery.googleapis.com --project={project_id}"
     
     # Comandos para crear datasets de BigQuery (versión reducida para inbox)
-    datasets = ["bronze", "silver", "staging"]
+    datasets = ["bronze", "silver", "staging", "dashboards"]
     create_datasets_cmds = []
     for dataset in datasets:
         create_datasets_cmds.append(f"bq mk --project_id={project_id} --dataset --location=US {dataset}")
@@ -250,6 +244,7 @@ def dry_run_mode():
                  , company_new_name
                  , company_project_id
             FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
+            WHERE company_project_id IS NULL OR company_project_id = ''
            ORDER BY company_id
         """
 
@@ -359,6 +354,7 @@ def real_execution_mode():
                  , company_new_name
                  , company_project_id
             FROM `{PROJECT_SOURCE}.{DATASET_NAME}.{TABLE_NAME}`
+            WHERE company_project_id IS NULL OR company_project_id = ''
            ORDER BY company_id
         """
 
