@@ -6,7 +6,7 @@ from google.cloud import bigquery
 import subprocess
 import sys
 
-PROJECT_SOURCE = "platform-partners-des"
+PROJECT_SOURCE = "pph-central"
 DATASET_NAME = "settings"
 TABLE_NAME = "companies"
 
